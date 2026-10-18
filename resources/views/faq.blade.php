@@ -15,5 +15,5 @@
     ] as [$question,$answer])
         <details class="faq-item"><summary>{{ $question }}<span class="material-symbols-outlined" aria-hidden="true">expand_more</span></summary><p>{{ $answer }}</p></details>
     @endforeach
-</section><div class="site-cta"><h2>Siap memulai perjalanan hijaumu?</h2><a class="button" href="{{ route('catalog') }}">Jelajahi Katalog →</a></div>
+</section><div class="site-cta"><h2>Siap memulai perjalanan hijaumu?</h2><a class="button" href="{{ route('catalog') }}"><span>Jelajahi Katalog</span><span class="btn-arrow" aria-hidden="true">→</span></a></div>
 @endsection

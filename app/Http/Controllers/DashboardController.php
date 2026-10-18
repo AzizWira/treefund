@@ -22,6 +22,7 @@ class DashboardController extends Controller
                 'plantedCount' => Planting::where('status', 'approved')->count(), 'pendingFunds' => Disbursement::whereIn('status', ['pending', 'approved'])->sum('amount'),
                 'plantings' => Planting::with('tree.item.offer.plot.partner')->latest()->limit(5)->get(),
                 'logs' => AuditLog::with('actor')->latest()->limit(6)->get(),
+                'mapTrees' => Tree::with('item.offer.plot', 'planting')->whereHas('planting', fn ($q) => $q->where('status', 'approved'))->get(),
                 'monthly' => Planting::where('status', 'approved')->whereYear('planted_at', now()->year)->get()->groupBy(fn ($p) => $p->planted_at->format('m'))->map->count(),
             ]);
         }
@@ -39,7 +40,14 @@ class DashboardController extends Controller
 
     public function notifications(Request $request): mixed
     {
-        return view('notifications', ['notifications' => $request->user()->activityNotifications()->paginate(20)]);
+        return view('notifications', ['notifications' => $request->user()->activityNotifications()->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('title', 'like', '%'.$request->input('q').'%')->orWhere('body', 'like', '%'.$request->input('q').'%')))->paginate(15)->withQueryString()]);
+    }
+
+    public function readAllNotifications(Request $request): mixed
+    {
+        $request->user()->activityNotifications()->whereNull('read_at')->update(['read_at' => now()]);
+
+        return back()->with('success', 'Semua notifikasi telah ditandai dibaca.');
     }
 
     public function readNotification(Request $request, ActivityNotification $notification): mixed

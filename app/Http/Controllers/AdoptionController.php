@@ -52,12 +52,12 @@ class AdoptionController extends Controller
             return redirect()->route('certificates');
         }
 
-        return view('orders', ['orders' => $request->user()->adoptions()->with('items.offer.plot', 'certificate')->latest()->paginate(12)->withQueryString()]);
+        return view('orders', ['orders' => $request->user()->adoptions()->with('items.offer.plot', 'certificate')->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('reference', 'like', '%'.$request->input('q').'%')->orWhere('certificate_name', 'like', '%'.$request->input('q').'%')->orWhereHas('items.offer', fn ($q) => $q->where('species', 'like', '%'.$request->input('q').'%')->orWhereHas('plot', fn ($q) => $q->where('name', 'like', '%'.$request->input('q').'%')))))->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))->latest()->paginate(12)->withQueryString()]);
     }
 
     public function certificates(Request $request): mixed
     {
-        return view('certificates', ['orders' => $request->user()->adoptions()->where('status', 'paid')->whereHas('certificate')->with('items.offer.plot', 'certificate')->latest('paid_at')->paginate(9)]);
+        return view('certificates', ['orders' => $request->user()->adoptions()->where('status', 'paid')->whereHas('certificate')->with('items.offer.plot', 'certificate')->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('certificate_name', 'like', '%'.$request->input('q').'%')->orWhere('reference', 'like', '%'.$request->input('q').'%')->orWhereHas('certificate', fn ($q) => $q->where('number', 'like', '%'.$request->input('q').'%'))))->latest('paid_at')->paginate(9)->withQueryString()]);
     }
 
     public function show(Request $request, Adoption $order): mixed
@@ -111,6 +111,9 @@ class AdoptionController extends Controller
         $this->owner($request, $order);
         abort_unless($order->status === 'paid' && $order->certificate, 404);
         $order->load('user', 'items.offer.plot', 'items.trees', 'certificate');
+        if ($request->boolean('preview')) {
+            return view('certificate-preview', compact('order'));
+        }
         $pdf = app('dompdf.wrapper')->loadView('certificate', compact('order'))->setPaper('a4', 'landscape');
 
         return $pdf->download($order->certificate->number.'.pdf');

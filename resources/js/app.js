@@ -1,91 +1,262 @@
 import { initPaymentWatch } from './payment-watch';
+import { initRevisionUI } from './revision-ui';
+import { initFilterNavigation } from './filter-navigation';
+import { initPaymentMethods, paymentOptions } from './payment-methods';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-L.Icon.Default.mergeOptions({iconUrl:markerIcon,iconRetinaUrl:markerIcon2x,shadowUrl:markerShadow});
-let paymentWatch;
-const csrf=()=>document.querySelector('meta[name=csrf-token]')?.content;
-document.querySelectorAll('form[action$="/logout"]').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button');button.disabled=true;try{const response=await fetch(form.action,{method:'POST',credentials:'same-origin',headers:{'X-CSRF-TOKEN':csrf(),'Accept':'application/json'}});if(!response.ok)throw new Error();window.location.assign('/');}catch{button.disabled=false;button.textContent='Gagal keluar. Coba lagi';}}));
-const money=n=>'Rp '+new Intl.NumberFormat('id-ID').format(n);
-const text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e;};
-function baseMap(element,lat=-8.12849,lng=114.28391,zoom=12){const map=L.map(element,{scrollWheelZoom:false}).setView([lat,lng],zoom);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',maxZoom:19}).addTo(map);return map;}
-let treeMap;
-window.TreeFund={miniMap(id){const e=document.getElementById(id);if(e&&!e._leaflet_id){const m=baseMap(e);L.circleMarker([-8.12849,114.28391],{radius:8,color:'#2d6a4f',fillOpacity:.7}).addTo(m);}}};
-document.querySelectorAll('[data-sidebar]').forEach(button=>button.addEventListener('click',()=>document.getElementById('sidebar')?.classList.toggle('open')));
-document.addEventListener('click',e=>{const side=document.getElementById('sidebar');if(window.innerWidth<=700 && side?.classList.contains('open') && !side.contains(e.target) && !e.target.closest('[data-sidebar]'))side.classList.remove('open');});
-document.querySelectorAll('[data-confirm]').forEach(form=>form.addEventListener('submit',e=>{if(!confirm(form.dataset.confirm))e.preventDefault();}));
-document.querySelectorAll('[data-checkout]').forEach(form=>{const q=form.querySelector('[data-quantity]');const update=()=>document.querySelector('[data-total]').textContent=money(Number(q.value)*Number(form.dataset.price));q.addEventListener('input',update);update();});
-document.querySelectorAll('input[type=file][accept*="image"]').forEach(input=>input.addEventListener('change',()=>{input.parentElement.querySelector('.photo-preview')?.remove();const file=input.files?.[0];if(!file||!file.type.startsWith('image/'))return;const image=document.createElement('img');image.className='photo-preview';image.alt='Pratinjau foto yang dipilih';const url=URL.createObjectURL(file);image.onload=()=>URL.revokeObjectURL(url);image.src=url;input.parentElement.append(image);}));
-document.querySelectorAll('[data-gps]').forEach(button=>button.addEventListener('click',()=>{const form=button.closest('form')??document.querySelector('form[action="/partner/plots"]');const status=button.closest('form')?.querySelector('[data-gps-status]')??document.querySelector('[data-gps-status]');if(!navigator.geolocation){if(status)status.textContent='GPS tidak tersedia. Masukkan koordinat secara manual.';return;}button.disabled=true;if(status)status.textContent='Membaca lokasi perangkat…';navigator.geolocation.getCurrentPosition(p=>{form.querySelector('[name=latitude]').value=p.coords.latitude.toFixed(7);form.querySelector('[name=longitude]').value=p.coords.longitude.toFixed(7);if(status)status.textContent='Koordinat terbaca. Akurasi perangkat sekitar '+Math.round(p.coords.accuracy)+' meter; tetap diperiksa Admin.';button.disabled=false;},()=>{button.disabled=false;if(status)status.textContent='Lokasi belum dapat diakses. Periksa izin browser atau masukkan koordinat secara manual.';},{enableHighAccuracy:true,timeout:15000});}));
-document.querySelectorAll('[data-pay]').forEach(button=>button.addEventListener('click',async()=>{const message=document.querySelector('[data-payment-message]');button.disabled=true;message.textContent='Menyiapkan pembayaran Sandbox…';try{const response=await fetch(button.dataset.pay,{method:'POST',headers:{'X-CSRF-TOKEN':csrf(),'Accept':'application/json'}});const data=await response.json();if(!response.ok)throw new Error(Object.values(data.errors??{}).flat()[0]??data.message??'Pembayaran belum dapat dibuka.');paymentWatch?.start();if(!window.snap)throw new Error('Snap Midtrans belum dimuat. Periksa koneksi internet dan client key.');window.snap.pay(data.token,{onSuccess:()=>{message.textContent='Pembayaran diterima. Mengonfirmasi status ke server…';paymentWatch?.check();button.disabled=false;},onPending:()=>{message.textContent='Menunggu pembayaran. Status diperiksa otomatis.';paymentWatch?.start();button.disabled=false;},onError:()=>{message.textContent='Pembayaran belum berhasil. Periksa status pesanan sebelum mencoba kembali.';button.disabled=false;},onClose:()=>{message.textContent='Popup ditutup. Penutupan popup tidak membatalkan pembayaran.';button.disabled=false;}});}catch(error){message.textContent=error.message;button.disabled=false;}}));
-async function initMaps(){document.querySelectorAll('[data-coordinate-map]').forEach(e=>{if(e.closest('dialog')&&!e.closest('dialog').open)return;const lat=Number(e.dataset.lat),lng=Number(e.dataset.lng);const map=baseMap(e,lat,lng);e._treefundMap=map;L.marker([lat,lng]).addTo(map);});if(document.getElementById('plot-preview-map'))window.TreeFund.miniMap('plot-preview-map');if(document.getElementById('overview-map'))window.TreeFund.miniMap('overview-map');const e=document.getElementById('tree-map');if(!e)return;treeMap=baseMap(e,-7.5,112,7);try{const response=await fetch(e.dataset.mapUrl,{headers:{Accept:'application/json'}});if(!response.ok)throw new Error();const rows=await response.json();const markers=[];for(const row of rows){const content=document.createElement('div');content.append(text('strong',row.species),text('p',row.code),text('p',row.plot),text('small','Diperbarui '+row.updated_at));const link=text('a','Lihat timeline →');link.href='/trees?tree='+encodeURIComponent(row.id);link.style.color='#2d6a4f';content.append(link);const marker=L.marker([row.latitude,row.longitude]).addTo(treeMap).bindPopup(content);markers.push(marker);if(Number(new URLSearchParams(location.search).get('tree'))===row.id){marker.openPopup();treeMap.setView([row.latitude,row.longitude],15);}}const fit=()=>{if(markers.length)treeMap.fitBounds(L.featureGroup(markers).getBounds().pad(.2),{maxZoom:15});};if(!location.search.includes('tree='))fit();document.querySelector('[data-map-fit]')?.addEventListener('click',fit);}catch{const notice=document.createElement('div');notice.className='info-box';notice.style.cssText='position:absolute;top:65px;left:15px;z-index:600;max-width:300px';notice.textContent='Peta belum dapat memuat titik. Foto dan timeline tetap dapat dibaca.';e.append(notice);}}
-initMaps();
 
-const evidenceImages = document.querySelectorAll('[data-evidence-src]');
-if (evidenceImages.length) {
-    const loadEvidence = image => {
-        image.src = image.dataset.evidenceSrc;
-        image.removeAttribute('data-evidence-src');
-    };
-    if ('IntersectionObserver' in window) {
-        const evidenceObserver = new IntersectionObserver(entries => {
-            for (const entry of entries) {
-                if (entry.isIntersecting) {
-                    loadEvidence(entry.target);
-                    evidenceObserver.unobserve(entry.target);
-                }
-            }
-        }, { rootMargin: '100px 0px' });
-        evidenceImages.forEach(image => evidenceObserver.observe(image));
-        window.addEventListener('pagehide', () => evidenceObserver.disconnect());
-        window.addEventListener('pageshow', event => { if (event.persisted) document.querySelectorAll('[data-evidence-src]').forEach(image => evidenceObserver.observe(image)); });
-    } else {
-        evidenceImages.forEach(loadEvidence);
-    }
+L.Icon.Default.mergeOptions({ iconUrl: markerIcon, iconRetinaUrl: markerIcon2x, shadowUrl: markerShadow });
+const maps = new Map();
+const csrf = () => document.querySelector('meta[name=csrf-token]')?.content;
+const money = value => 'Rp ' + new Intl.NumberFormat('id-ID').format(value);
+const text = (tag, value) => { const element = document.createElement(tag); element.textContent = value; return element; };
+let evidenceObserver;
+let paymentWatch;
+
+function baseMap(element, latitude = -8.12849, longitude = 114.28391, zoom = 12) {
+    if (maps.has(element)) return maps.get(element);
+    const map = L.map(element, { scrollWheelZoom: false, zoomAnimation: false }).setView([latitude, longitude], zoom);
+    maps.set(element, map);
+    element._treefundMap = map;
+    const tiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Sources: Esri, HERE, Garmin, Intermap, USGS, FAO, NPS, NRCAN, GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), OpenStreetMap contributors, and the GIS User Community',
+        maxZoom: 19,
+    }).addTo(map);
+    let note;
+    tiles.on('tileerror', () => {
+        if (note) return;
+        note = document.createElement('div'); note.className = 'map-network-note'; note.setAttribute('role', 'status');
+        note.append(text('span', 'Peta dasar belum dapat dimuat. Data lokasi tetap tersedia.'));
+        const retry = text('button', 'Coba ulang'); retry.type = 'button'; retry.className = 'text-link';
+        retry.addEventListener('click', () => { note.remove(); note = null; tiles.redraw(); });
+        note.append(retry); element.append(note); L.DomEvent.disableClickPropagation(note);
+    });
+    return map;
 }
-document.querySelector('[data-public-menu]')?.addEventListener('click', event => {
-    const button = event.currentTarget;
-    const open = document.getElementById('website-nav')?.classList.toggle('open');
-    button.setAttribute('aria-expanded', String(!!open));
-});
-async function initPublicMap() {
-    const element = document.getElementById('public-map');
-    if (!element) return;
-    const status = document.querySelector('[data-public-map-status]');
-    const map = baseMap(element, -5, 117, 5);
-    try {
-        const response = await fetch(element.dataset.mapUrl, {headers: {Accept: 'application/json'}});
-        if (!response.ok) throw new Error();
-        const rows = await response.json();
+
+function fitMap(map, markers, maxZoom = 15) {
+    if (markers.length) map.fitBounds(L.featureGroup(markers).getBounds().pad(.2), { maxZoom });
+}
+
+window.TreeFund = {
+    miniMap(id) {
+        const element = document.getElementById(id);
+        if (!element || maps.has(element)) return;
+        const map = baseMap(element);
+        L.marker([-8.12849, 114.28391]).addTo(map);
+    },
+};
+
+async function initMaps(scope) {
+    scope.querySelectorAll('[data-coordinate-map]').forEach(element => {
+        if (element.closest('dialog') && !element.closest('dialog').open) return;
+        const map = baseMap(element, Number(element.dataset.lat), Number(element.dataset.lng));
+        L.marker([Number(element.dataset.lat), Number(element.dataset.lng)]).addTo(map);
+    });
+    if (scope.querySelector('#plot-preview-map')) window.TreeFund.miniMap('plot-preview-map');
+    const overview = scope.querySelector('[data-overview-map]');
+    if (overview) {
+        const map = baseMap(overview, -7.5, 112, 7);
+        const rows = JSON.parse(scope.querySelector('#overview-map-data').textContent);
         const markers = rows.map(row => {
-            const popup = document.createElement('div');
-            popup.append(text('strong', row.name), text('p', row.location), text('p', row.group), text('small', row.species.join(', ') + ' · Tersedia ' + row.available + ' pohon'));
-            const link = text('a', 'Lihat penawaran →');
-            link.href = '/catalog?q=' + encodeURIComponent(row.name);
-            popup.append(link);
+            const popup = document.createElement('div'); popup.append(text('strong', row.code), text('p', row.plot));
             return L.marker([row.latitude, row.longitude]).addTo(map).bindPopup(popup);
         });
-        if (markers.length) map.fitBounds(L.featureGroup(markers).getBounds().pad(.25), {maxZoom: 12});
-        status.textContent = rows.length ? rows.length + ' lahan terverifikasi tersedia pada katalog.' : 'Belum ada lahan yang dipublikasikan.';
-    } catch {
-        status.textContent = 'Data peta belum dapat dimuat. Penawaran tetap tersedia pada katalog.';
+        fitMap(map, markers);
+    }
+    const treeElement = scope.querySelector('#tree-map');
+    if (treeElement) {
+        const map = baseMap(treeElement, -7.5, 112, 7);
+        try {
+            const response = await fetch(treeElement.dataset.mapUrl, { headers: { Accept: 'application/json' } });
+            if (!response.ok) throw new Error();
+            const rows = await response.json();
+            if (!treeElement.isConnected) return;
+            const selected = Number(new URLSearchParams(location.search).get('tree'));
+            const markers = rows.map(row => {
+                const popup = document.createElement('div');
+                popup.append(text('strong', row.species), text('p', row.code), text('p', row.plot), text('small', 'Diperbarui ' + row.updated_at));
+                const marker = L.marker([row.latitude, row.longitude]).addTo(map).bindPopup(popup);
+                marker.on('click', () => { if (selected !== row.id) location.assign('/trees?tree=' + encodeURIComponent(row.id)); });
+                if (selected === row.id) { marker.openPopup(); map.setView([row.latitude, row.longitude], 15); }
+                return marker;
+            });
+            if (!rows.some(row => row.id === selected)) fitMap(map, markers);
+            scope.querySelector('[data-map-fit]')?.addEventListener('click', () => fitMap(map, markers));
+        } catch {
+            if (treeElement.isConnected) { const note = text('p', 'Peta belum dapat memuat titik. Foto dan timeline tetap dapat dibaca.'); note.className = 'map-network-note'; note.setAttribute('role', 'status'); treeElement.append(note); }
+        }
+    }
+    const publicElement = scope.querySelector('#public-map');
+    if (publicElement) {
+        const status = scope.querySelector('[data-public-map-status]');
+        const map = baseMap(publicElement, -5, 117, 5);
+        try {
+            const response = await fetch(publicElement.dataset.mapUrl, { headers: { Accept: 'application/json' } });
+            if (!response.ok) throw new Error();
+            const rows = await response.json();
+            if (!publicElement.isConnected) return;
+            const markers = rows.map(row => {
+                const popup = document.createElement('div');
+                popup.append(text('strong', row.name), text('p', row.location), text('p', row.group), text('small', row.species.join(', ') + ' · Tersedia ' + row.available + ' pohon'));
+                const link = text('a', 'Lihat penawaran →'); link.href = '/catalog?q=' + encodeURIComponent(row.name); popup.append(link);
+                return L.marker([row.latitude, row.longitude]).addTo(map).bindPopup(popup);
+            });
+            fitMap(map, markers, 12);
+            scope.querySelector('[data-public-map-fit]')?.addEventListener('click', () => fitMap(map, markers, 12));
+            status.textContent = rows.length + ' lahan terverifikasi tersedia pada katalog. Klik penanda untuk melihat penawaran.';
+        } catch {
+            if (status?.isConnected) status.textContent = 'Data peta belum dapat dimuat. Penawaran tetap tersedia pada katalog.';
+        }
     }
 }
-initPublicMap();
-paymentWatch = initPaymentWatch({csrf});
-document.querySelectorAll('[data-review-target]').forEach(button => button.addEventListener('click', () => {
+
+function loadEvidence(image) {
+    const source = image.dataset.evidenceSrc;
+    if (!source) return;
+    image.src = source;
+    image.removeAttribute('data-evidence-src');
+}
+
+function openReview(button) {
     const dialog = document.getElementById(button.dataset.reviewTarget);
-    if (!dialog) return;
+    if (!dialog || dialog.open) return;
     dialog.showModal();
-        requestAnimationFrame(() => dialog.querySelectorAll('[data-coordinate-map]').forEach(element => {
-        if (!element._treefundMap) {
-            const latitude = Number(element.dataset.lat);
-            const longitude = Number(element.dataset.lng);
-            element._treefundMap = baseMap(element, latitude, longitude);
-            L.marker([latitude, longitude]).addTo(element._treefundMap);
+    dialog.querySelectorAll('[data-evidence-src]').forEach(loadEvidence);
+    requestAnimationFrame(() => dialog.querySelectorAll('[data-coordinate-map]').forEach(element => {
+        if (!maps.has(element)) {
+            const map = baseMap(element, Number(element.dataset.lat), Number(element.dataset.lng));
+            L.marker([Number(element.dataset.lat), Number(element.dataset.lng)]).addTo(map);
         }
-        element._treefundMap.invalidateSize();
+        maps.get(element).invalidateSize();
     }));
-}));
+}
+
+function initializePage(scope = document) {
+    initRevisionUI(scope);
+    initPaymentMethods(scope);
+    scope.querySelectorAll('[data-checkout]').forEach(form => {
+        const quantity = form.querySelector('[data-quantity]');
+        const update = () => scope.querySelector('[data-total]').textContent = money(Number(quantity.value) * Number(form.dataset.price));
+        quantity.addEventListener('input', update); update();
+    });
+    evidenceObserver?.disconnect();
+    if ('IntersectionObserver' in window) {
+        evidenceObserver = new IntersectionObserver(entries => entries.forEach(entry => {
+            if (entry.isIntersecting) { loadEvidence(entry.target); evidenceObserver.unobserve(entry.target); }
+        }), { rootMargin: '100px 0px' });
+        scope.querySelectorAll('[data-evidence-src]').forEach(image => evidenceObserver.observe(image));
+    } else scope.querySelectorAll('[data-evidence-src]').forEach(loadEvidence);
+    initMaps(scope);
+    const focused = new URLSearchParams(location.search).get('review');
+    const target = /^[1-9][0-9]*$/.test(focused || '') ? 'review-' + focused : (location.hash.startsWith('#review-') ? location.hash.slice(1) : null);
+    if (target) { const button = scope.querySelector(`[data-review-target="${CSS.escape(target)}"]`); if (button) openReview(button); }
+    if (location.hash.startsWith('#edit-')) openDetails(location.hash.slice(1));
+}
+
+function openDetails(id) {
+    const section = document.getElementById(id);
+    const details = section?.querySelector('details');
+    if (!details) return;
+    details.open = true;
+    section.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+}
+
+const sidebar = document.getElementById('sidebar');
+const scrim = document.querySelector('[data-sidebar-close]');
+function setSidebar(open) {
+    sidebar?.classList.toggle('open', open);
+    if (scrim) scrim.hidden = !open;
+    document.querySelector('[data-sidebar]')?.setAttribute('aria-expanded', String(open));
+}
+
+document.addEventListener('click', event => {
+    const button = event.target.closest('[data-sidebar],[data-sidebar-close],[data-review-target],[data-open-details],[data-gps],[data-public-menu]');
+    if (button?.hasAttribute('data-sidebar')) setSidebar(!sidebar?.classList.contains('open'));
+    else if (button?.hasAttribute('data-sidebar-close')) setSidebar(false);
+    else if (button?.hasAttribute('data-review-target')) openReview(button);
+    else if (button?.hasAttribute('data-open-details')) { event.preventDefault(); openDetails(button.dataset.openDetails); }
+    else if (button?.hasAttribute('data-gps')) recordGPS(button);
+    else if (button?.hasAttribute('data-public-menu')) {
+        const open = document.getElementById('website-nav')?.classList.toggle('open');
+        button.setAttribute('aria-expanded', String(!!open));
+    }
+    if (innerWidth <= 700 && sidebar?.classList.contains('open') && !sidebar.contains(event.target) && !event.target.closest('[data-sidebar]')) setSidebar(false);
+    const decision = event.target.closest('button[name="decision"]');
+    if (decision) { const note = decision.form?.querySelector('[name="review_note"],[name="note"]'); if (note) note.required = decision.value === 'revision'; }
+    const demo = event.target.closest('[data-demo-account]');
+    if (demo) {
+        const form = document.querySelector('form[action="/login"]');
+        if (form) { form.elements.email.value = demo.dataset.demoAccount; form.elements.password.value = 'TreeFund!2026'; form.requestSubmit(); }
+    }
+    const pay = event.target.closest('[data-pay]');
+    if (pay) payOrder(pay);
+    const back = event.target.closest('[data-back]');
+    if (back) { if (history.length > 1) history.back(); else location.assign('/dashboard'); }
+});
+document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebar(false); });
+
+function recordGPS(button) {
+    const form = button.closest('form');
+    const status = form?.querySelector('[data-gps-status]');
+    if (!form || !navigator.geolocation) { if (status) status.textContent = 'GPS tidak tersedia. Masukkan koordinat secara manual.'; return; }
+    button.disabled = true;
+    if (status) status.textContent = 'Membaca lokasi perangkat…';
+    navigator.geolocation.getCurrentPosition(position => {
+        form.querySelector('[name=latitude]').value = position.coords.latitude.toFixed(7);
+        form.querySelector('[name=longitude]').value = position.coords.longitude.toFixed(7);
+        if (status) status.textContent = 'Koordinat terbaca. Akurasi perangkat sekitar ' + Math.round(position.coords.accuracy) + ' meter; tetap diperiksa Admin.';
+        button.disabled = false;
+    }, () => { button.disabled = false; if (status) status.textContent = 'Lokasi belum dapat diakses. Periksa izin browser atau masukkan koordinat secara manual.'; }, { enableHighAccuracy: true, timeout: 15000 });
+}
+
+document.addEventListener('change', event => {
+    const input = event.target;
+    if (!input.matches('input[type=file]')) return;
+    input.setCustomValidity('');
+    input.parentElement.querySelector('.photo-preview')?.remove();
+    const file = input.files?.[0];
+    if (!file) return;
+    const max = Number(input.dataset.maxMb || (input.name === 'document' ? 10 : 5));
+    if (file.size > max * 1024 * 1024) { input.setCustomValidity('Ukuran berkas maksimal ' + max + ' MB.'); input.reportValidity(); return; }
+    if (!file.type.startsWith('image/')) return;
+    const image = document.createElement('img'); image.className = 'photo-preview'; image.alt = 'Pratinjau berkas yang dipilih';
+    const url = URL.createObjectURL(file); image.onload = () => URL.revokeObjectURL(url); image.src = url; input.parentElement.append(image);
+});
+
+async function payOrder(button) {
+    if (button.disabled) return;
+    const message = document.querySelector('[data-payment-message]');
+    button.disabled = true; message.textContent = 'Menyiapkan pembayaran Sandbox…';
+    try {
+        const response = await fetch(button.dataset.pay, { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-TOKEN': csrf(), Accept: 'application/json' } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(Object.values(data.errors ?? {}).flat()[0] ?? data.message ?? 'Pembayaran belum dapat dibuka.');
+        if (!window.snap) throw new Error('Snap Midtrans belum dimuat. Periksa koneksi internet dan client key.');
+        paymentWatch?.start();
+        window.snap.pay(data.token, {
+            ...paymentOptions(button.dataset.method, button.dataset.bank),
+            onSuccess: () => { message.textContent = 'Pembayaran diterima. Mengonfirmasi status ke server…'; paymentWatch?.check(); button.disabled = false; },
+            onPending: () => { message.textContent = 'Menunggu pembayaran. Status diperiksa otomatis.'; paymentWatch?.start(); button.disabled = false; },
+            onError: () => { message.textContent = 'Pembayaran belum berhasil. Periksa status pesanan sebelum mencoba kembali.'; button.disabled = false; },
+            onClose: () => { message.textContent = 'Popup ditutup. Penutupan popup tidak membatalkan pembayaran.'; button.disabled = false; },
+        });
+    } catch (error) { message.textContent = error.message; button.disabled = false; }
+}
+
+initializePage();
+paymentWatch = initPaymentWatch({ csrf });
+initFilterNavigation({
+    beforeReplace(main) {
+        evidenceObserver?.disconnect();
+        for (const [element, map] of maps) if (main.contains(element)) { map.remove(); maps.delete(element); }
+    },
+    afterReplace: initializePage,
+});
+window.addEventListener('pagehide', () => evidenceObserver?.disconnect());
+window.addEventListener('pageshow', event => {
+    if (event.persisted) document.querySelectorAll('[data-evidence-src]').forEach(image => evidenceObserver?.observe(image));
+});

@@ -30,6 +30,21 @@ class FileController extends Controller
         };
         abort_unless($file && Storage::disk('local')->exists($file), 404);
 
+        if ($request->boolean('download')) {
+            return Storage::disk('local')->download($file, null, ['X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, no-store']);
+        }
+        if ($request->boolean('preview')) {
+            $title = match ($type) {
+                'legal' => 'Dokumen Legalitas Kelompok Tani',
+                'planting' => 'Dokumentasi Bukti Tanam',
+                'monitoring' => 'Dokumentasi Monitoring',
+                'transfer' => 'Bukti Transfer',
+            };
+            $mime = Storage::disk('local')->mimeType($file) ?: 'application/octet-stream';
+
+            return view('file-preview', compact('title', 'mime', 'type', 'id'));
+        }
+
         return Storage::disk('local')->response($file, null, ['X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, no-store']);
     }
 }

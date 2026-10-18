@@ -42,6 +42,7 @@ Route::post('/payments/midtrans/notification', MidtransWebhookController::class)
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/notifications', [DashboardController::class, 'notifications'])->name('notifications');
+    Route::post('/notifications/read-all', [DashboardController::class, 'readAllNotifications'])->name('notifications.read-all');
     Route::post('/notifications/{notification}/read', [DashboardController::class, 'readNotification']);
     Route::get('/files/{type}/{id}', FileController::class)->name('files');
     Route::middleware('role:donor')->group(function () {

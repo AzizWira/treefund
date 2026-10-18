@@ -35,8 +35,22 @@ class AdminController extends Controller
             $request->validate(['work_order_id' => 'required|integer|min:1']);
             $work = WorkOrder::with('partner', 'item.offer.plot')->findOrFail($request->integer('work_order_id'));
         }
+        $request->validate(['review' => 'nullable|integer|min:1']);
         $records = $map[$type]::with($relations)
+            ->when($request->filled('review'), fn ($query) => $query->whereKey($request->integer('review')))
             ->when($work, fn ($query) => $query->whereHas('tree', fn ($trees) => $trees->where('adoption_item_id', $work->adoption_item_id)))
+            ->when($request->filled('q'), function ($query) use ($request, $type) {
+                $term = '%'.$request->input('q').'%';
+                $query->where(function ($query) use ($term, $type) {
+                    if ($type === 'partners') {
+                        $query->where('group_name', 'like', $term)->orWhere('address', 'like', $term);
+                    } elseif ($type === 'plots') {
+                        $query->where('name', 'like', $term)->orWhere('location', 'like', $term)->orWhereHas('partner', fn ($q) => $q->where('group_name', 'like', $term));
+                    } else {
+                        $query->whereHas('tree', fn ($q) => $q->where('code', 'like', $term)->orWhereHas('item.offer', fn ($q) => $q->where('species', 'like', $term)->orWhereHas('plot', fn ($q) => $q->where('name', 'like', $term)->orWhereHas('partner', fn ($q) => $q->where('group_name', 'like', $term)))));
+                    }
+                });
+            })
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))->latest()->paginate(15)->withQueryString();
 
         return view('admin.queue', compact('type', 'records', 'work'));
@@ -78,9 +92,9 @@ class AdminController extends Controller
         return back()->with('success', 'Keputusan verifikasi disimpan.');
     }
 
-    public function catalog(): mixed
+    public function catalog(Request $request): mixed
     {
-        return view('admin.catalog', ['offers' => Offer::with('plot.partner')->latest()->get(), 'plots' => Plot::where('status', 'approved')->get()]);
+        return view('admin.catalog', ['offers' => $this->filteredRecords($request, Offer::with('plot.partner')->latest()->get(), fn ($offer) => $offer->species.' '.$offer->plot->name.' '.$offer->plot->partner->group_name, 15, fn ($offer) => $offer->active ? 'active' : 'inactive'), 'plots' => Plot::where('status', 'approved')->get()]);
     }
 
     public function saveOffer(Request $request, ActivityService $activity): mixed
@@ -106,7 +120,7 @@ class AdminController extends Controller
     {
         abort_unless($request->user()->can_manage_finance, 403);
 
-        return view('admin.funds', ['records' => Disbursement::with('workOrder.partner', 'workOrder.item.offer.plot', 'rule')->latest()->paginate(15)]);
+        return view('admin.funds', ['works' => $this->filteredRecords($request, WorkOrder::with('partner', 'item.offer')->withExists('disbursements')->latest()->get(), fn ($work) => 'WO-'.$work->id.' '.$work->partner->group_name.' '.$work->item->offer->species, 8, null, 'allocation_page', 'allocation_'), 'records' => $this->filteredRecords($request, Disbursement::with('workOrder.partner', 'workOrder.item.offer.plot', 'rule')->latest()->get(), fn ($fund) => 'WO-'.$fund->work_order_id.' '.$fund->rule->name.' '.$fund->workOrder->partner->group_name.' '.$fund->workOrder->item->offer->plot->name, 15, fn ($fund) => $fund->status)]);
     }
 
     public function allocation(Request $request, WorkOrder $work, ActivityService $activity): mixed
@@ -165,7 +179,7 @@ class AdminController extends Controller
 
     public function reports(Request $request): mixed
     {
-        $data = ['paidTotal' => Adoption::where('status', 'paid')->sum('total'), 'paidCount' => Adoption::where('status', 'paid')->count(), 'plantedCount' => Planting::where('status', 'approved')->count(), 'transferred' => Disbursement::where('status', 'paid')->sum('amount'), 'orders' => Adoption::with('user', 'items.offer.plot')->latest()->paginate(15)];
+        $data = ['paidTotal' => Adoption::where('status', 'paid')->sum('total'), 'paidCount' => Adoption::where('status', 'paid')->count(), 'plantedCount' => Planting::where('status', 'approved')->count(), 'transferred' => Disbursement::where('status', 'paid')->sum('amount'), 'orders' => Adoption::with('user', 'items.offer.plot')->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('reference', 'like', '%'.$request->input('q').'%')->orWhereHas('user', fn ($q) => $q->where('name', 'like', '%'.$request->input('q').'%'))))->latest()->paginate(15)->withQueryString()];
         $data['healthCounts'] = Tree::with(['monitorings' => fn ($q) => $q->where('status', 'approved')])->whereHas('planting', fn ($q) => $q->where('status', 'approved'))->get()->groupBy(fn ($tree) => $tree->monitorings->first()?->health ?? 'unknown')->map->count();
         $data['termTotals'] = TerminRule::all()->map(fn ($rule) => ['name' => $rule->name, 'amount' => Disbursement::where('termin_rule_id', $rule->id)->where('status', 'paid')->sum('amount'), 'count' => Disbursement::where('termin_rule_id', $rule->id)->where('status', 'paid')->count()]);
 
@@ -190,9 +204,9 @@ class AdminController extends Controller
         }, 'rekap-treefund-'.now()->toDateString().'.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
-    public function settings(): mixed
+    public function settings(Request $request): mixed
     {
-        return view('admin.settings', ['rules' => TerminRule::all(), 'rulesLocked' => Disbursement::exists(), 'logs' => AuditLog::with('actor')->latest()->paginate(15)]);
+        return view('admin.settings', ['rules' => TerminRule::all(), 'rulesLocked' => Disbursement::exists(), 'logs' => AuditLog::with('actor')->when($request->filled('q'), fn ($q) => $q->where(fn ($q) => $q->where('action', 'like', '%'.$request->input('q').'%')->orWhere('subject_type', 'like', '%'.$request->input('q').'%')->orWhereHas('actor', fn ($q) => $q->where('name', 'like', '%'.$request->input('q').'%'))))->latest()->paginate(15)->withQueryString()]);
     }
 
     public function rules(Request $request): mixed

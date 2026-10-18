@@ -58,7 +58,7 @@ class PartnerController extends Controller
 
     public function plots(Request $request): mixed
     {
-        return view('partner.plots', ['partner' => $request->user()->partner, 'plots' => Plot::where('partner_id', $request->user()->partner?->id ?? 0)->latest()->get()]);
+        return view('partner.plots', ['partner' => $request->user()->partner, 'plots' => $this->filteredRecords($request, Plot::where('partner_id', $request->user()->partner?->id ?? 0)->latest()->get(), fn ($plot) => $plot->name.' '.$plot->location.' '.$plot->proposed_species, 8, fn ($plot) => $plot->status)]);
     }
 
     public function savePlot(Request $request, ActivityService $activity): mixed
@@ -78,7 +78,7 @@ class PartnerController extends Controller
 
     public function workOrders(Request $request): mixed
     {
-        return view('partner.works', ['works' => WorkOrder::with('item.offer.plot', 'item.adoption', 'item.trees.planting')->where('partner_id', $request->user()->partner?->id ?? 0)->latest()->get()]);
+        return view('partner.works', ['works' => $this->filteredRecords($request, WorkOrder::with('item.offer.plot', 'item.adoption', 'item.trees.planting')->where('partner_id', $request->user()->partner?->id ?? 0)->latest()->get(), fn ($work) => 'WO-'.$work->id.' '.$work->item->offer->species.' '.$work->item->offer->plot->name.' '.$work->item->adoption->certificate_name, 15, fn ($work) => $work->progress_status)]);
     }
 
     public function workOrder(Request $request, WorkOrder $work): mixed
@@ -106,6 +106,8 @@ class PartnerController extends Controller
     {
         $trees = Tree::with('item.offer.plot', 'planting', 'monitorings')->whereHas('item.offer.plot', fn ($q) => $q->where('partner_id', $request->user()->partner?->id ?? 0))->whereHas('planting', fn ($q) => $q->where('status', 'approved'))->get();
 
+        $trees = $this->filteredRecords($request, $trees, fn ($tree) => $tree->code.' '.$tree->item->offer->species.' '.$tree->item->offer->plot->name, 8);
+
         return view('partner.monitoring', compact('trees'));
     }
 
@@ -129,6 +131,8 @@ class PartnerController extends Controller
         $works = WorkOrder::with('item.offer.plot', 'item.trees.planting', 'item.trees.monitorings', 'disbursements.rule')->where('partner_id', $request->user()->partner?->id ?? 0)->get();
         $rules = TerminRule::orderBy('id')->get();
 
+        $works = $this->filteredRecords($request, $works, fn ($work) => 'WO-'.$work->id.' '.$work->item->offer->species.' '.$work->item->offer->plot->name, 8);
+
         return view('partner.funds', compact('works', 'rules'));
     }
 
@@ -144,7 +148,7 @@ class PartnerController extends Controller
 
     public function members(Request $request): mixed
     {
-        return view('partner.members', ['partner' => $request->user()->partner, 'members' => Member::where('partner_id', $request->user()->partner?->id ?? 0)->get()]);
+        return view('partner.members', ['partner' => $request->user()->partner, 'members' => $this->filteredRecords($request, Member::where('partner_id', $request->user()->partner?->id ?? 0)->get(), fn ($member) => $member->name.' '.$member->position.' '.$member->phone, 8)]);
     }
 
     public function saveMember(Request $request): mixed
